@@ -84,3 +84,8 @@ instrument wiring before interpreting contact-related signs. If one resistance
 direction is missing from a repeat, the repeat does not contribute to Rs mean.
 The original Hall ±B anti-symmetrization, signed RH averaging, and batch
 statistics are retained.
+
+## v1.2 표시 형식
+- Electrical properties 카드와 Analysis summary, Repeat-level, Raw diagnostics 화면의 과학적 표기법을 `2.668 × 10²⁰` 형태(위첨자 지수)로 표시합니다.
+- 비교적 작은/일반적인 값은 읽기 쉬운 소수 표기를 사용합니다. 예: `21.89`, `65.55`.
+- CSV 내보내기 및 계산에 사용되는 원본 수치(부동소수점)는 변경하지 않습니다.

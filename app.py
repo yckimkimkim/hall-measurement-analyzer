@@ -24,8 +24,37 @@ st.title("Hall Data Analyzer")
 st.caption("Single / Batch Hall Effect & Van der Pauw Measurement Analysis")
 
 
-def format_stats(df):
-    return df
+SUPERSCRIPT = str.maketrans("-+0123456789", "⁻⁺⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def scientific_text(value, digits=4, always=False):
+    """Human-readable display only; calculations and CSV keep full numeric precision."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if not np.isfinite(number):
+        return "N/A"
+    if number == 0:
+        return "0"
+    exponent = int(np.floor(np.log10(abs(number))))
+    if not always and -2 <= exponent < 4:
+        return f"{number:.{max(0, digits - exponent - 1)}f}".rstrip("0").rstrip(".")
+    mantissa = number / (10.0 ** exponent)
+    return f"{mantissa:.{digits-1}f} × 10{str(exponent).translate(SUPERSCRIPT)}"
+
+
+def format_display_table(df):
+    """Only format the displayed table; numeric values remain unchanged in exports."""
+    output = df.copy()
+    for column in output.columns:
+        if pd.api.types.is_bool_dtype(output[column]):
+            continue
+        if pd.api.types.is_numeric_dtype(output[column]):
+            if pd.api.types.is_integer_dtype(output[column]):
+                continue
+            output[column] = output[column].map(lambda x: scientific_text(x, digits=5))
+    return output
 
 
 def frame_bytes(df):
@@ -87,13 +116,8 @@ def resistance_controls(key):
     return None,None,manual
 
 
-def metric_text(value, digits=3):
-    try:
-        if np.isfinite(float(value)):
-            return f"{float(value):.{digits}e}"
-    except (TypeError, ValueError):
-        pass
-    return "N/A"
+def metric_text(value, digits=4):
+    return scientific_text(value, digits=digits)
 
 
 def display_primary_metrics(summary, key):
@@ -122,12 +146,12 @@ def show_results(raw,field,thickness,ra,rb,manual,key):
         st.error("분석할 데이터가 없습니다.");return
     display_primary_metrics(summary,key)
     st.subheader("Analysis summary")
-    st.dataframe(summary,hide_index=True,use_container_width=True)
+    st.dataframe(format_display_table(summary),hide_index=True,use_container_width=True)
     st.caption("반복별 signed RH와 Rs를 각각 평균한 뒤 nH=1/(q|RH_mean|), μH=|RH_mean|/ρ_mean을 계산합니다. Hall sign은 전극/자기장 극성 검증 전까지 캐리어 타입으로 해석하지 않습니다.")
     with st.expander("Repeat-level results / 반복별 계산 결과",expanded=True):
-        st.dataframe(reps,hide_index=True,use_container_width=True)
+        st.dataframe(format_display_table(reps),hide_index=True,use_container_width=True)
     with st.expander("Raw file diagnostics / 파일별 추출 결과"):
-        st.dataframe(raw,hide_index=True,use_container_width=True)
+        st.dataframe(format_display_table(raw),hide_index=True,use_container_width=True)
     with st.expander("Missing conditions and diagnostics"):
         if len(issues):st.dataframe(issues,hide_index=True,use_container_width=True)
         else:st.success("필수 조건 누락이 감지되지 않았습니다.")
