@@ -13,6 +13,10 @@ st.markdown('''<style>
 .block-container {padding-top: 2.2rem; max-width: 1740px;}
 h1 {font-size:2.15rem !important; font-weight:750 !important; color:#293246;}
 h2,h3 {color:#293246;}
+[data-testid="stMetric"] {min-height: 119px; border:1px solid #e6eaf0;}
+[data-testid="stMetricLabel"] {font-weight:600;}
+[data-testid="stMetricValue"] {font-size:clamp(1.18rem, 1.7vw, 2rem);font-weight:750;letter-spacing:-0.035em;}
+
 div.stButton > button[kind="primary"] {background:#ff4b4b;border-color:#ff4b4b;}
 [data-testid="stMetric"] {background:#f3f5f8;border-radius:8px;padding:15px 17px;}
 </style>''',unsafe_allow_html=True)
@@ -45,7 +49,7 @@ def plot_sample(d, name, param, unit):
     ax.set_ylabel(f"{param} ({unit})")
     ax.set_title(f"{name} — {param}")
     ax.grid(alpha=.22)
-    ax.legend(loc="best",fontsize=8)
+    if len(finite):ax.legend(loc="best",fontsize=8)
     fig.tight_layout()
     return fig
 
@@ -73,24 +77,42 @@ def measurement_controls(key):
 
 
 def resistance_controls(key):
-    st.markdown("**Van der Pauw 면저항 설정**")
-    st.caption("기존 i1-v23 등 4개 이름만으로 RA/RB 배선 대응이 확정되지 않습니다. 측정 회로를 확인한 후 지정하세요.")
-    c1,c2,c3=st.columns([1,1,2])
-    with c1:
-        mode=st.selectbox("Rs source",["저항 파일에서 RA/RB 지정", "시편 공통 Rs 수동 입력", "Hall만 분석"],key=f"{key}mode")
-    ra=rb=None; manual=None
-    if mode=="저항 파일에서 RA/RB 지정":
-        with c2:
-            ra=st.selectbox("RA file",VDP_GEOMS,index=0,key=f"{key}ra")
-        with c3:
-            rb=st.selectbox("RB file",VDP_GEOMS,index=1,key=f"{key}rb")
-        st.warning("RA/RB 전류·전압 배선 순서와 부호를 확인해야 정확한 면저항 및 이동도를 얻습니다. 저항의 절댓값 사용은 확인된 전압 극성에 한정하세요.")
-        verified=st.checkbox("전극 배선 및 RA/RB 대응을 확인했습니다",value=False,key=f"{key}verified")
-        if not verified or ra==rb:ra=rb=None
-    elif mode=="시편 공통 Rs 수동 입력":
-        manual=st.number_input("Sheet resistance Rs (Ω/□)",min_value=0.0,value=0.0,format="%.6f",key=f"{key}rs")
-        if manual<=0:manual=None
-    return ra,rb,manual
+    with st.expander("Van der Pauw 자동 계산 설정", expanded=False):
+        st.caption("i1-v23 / i3-v41 → RA, i2-v34 / i4-v12 → RB. 각 방향을 평균하여 면저항을 계산합니다. 검증되지 않은 접촉/비오믹 특성은 자동 보정되지 않습니다.")
+        override=st.checkbox("저항 파일이 없을 때 Rs 직접 입력",value=False,key=f"{key}manual_switch")
+        manual=None
+        if override:
+            manual=st.number_input("Sheet resistance Rs (Ω/□)",min_value=0.0,value=0.0,format="%.6f",key=f"{key}rs")
+            if manual<=0:manual=None
+    return None,None,manual
+
+
+def metric_text(value, digits=3):
+    try:
+        if np.isfinite(float(value)):
+            return f"{float(value):.{digits}e}"
+    except (TypeError, ValueError):
+        pass
+    return "N/A"
+
+
+def display_primary_metrics(summary, key):
+    st.markdown("### Electrical properties")
+    if len(summary)>1:
+        sample=st.selectbox("결과를 표시할 시편",list(summary["Sample"]),key=f"{key}focus")
+        s=summary.loc[summary["Sample"]==sample].iloc[0]
+    else:
+        s=summary.iloc[0]
+    c1,c2,c3=st.columns(3)
+    c1.metric("Carrier concentration",f"{metric_text(s['Carrier concentration (cm⁻³)'])} cm⁻³")
+    c2.metric("Hall mobility",f"{metric_text(s['Hall mobility (cm²/V·s)'])} cm²/V·s")
+    c3.metric("Resistivity",f"{metric_text(s['Resistivity (Ω·cm)'])} Ω·cm")
+    c4,c5,c6=st.columns(3)
+    c4.metric("Sheet resistance",f"{metric_text(s['Rs mean (Ω/□)'])} Ω/□")
+    c5.metric("Hall coefficient |RH|",f"{metric_text(abs(s['RH mean (cm³/C)']))} cm³/C")
+    c6.metric("Valid repeats",f"Hall {int(s['N Hall'])} / Rs {int(s['N Rs'])}")
+    if not np.isfinite(s["Hall mobility (cm²/V·s)"]):
+        st.warning("면저항이 계산되지 않아 이동도를 표시할 수 없습니다. ZIP 안의 i1-v23, i2-v34, i3-v41, i4-v12 측정 데이터를 확인하세요.")
 
 
 def show_results(raw,field,thickness,ra,rb,manual,key):
@@ -98,15 +120,9 @@ def show_results(raw,field,thickness,ra,rb,manual,key):
     summary,reps=summarize_samples(reps,thickness,field,manual)
     if summary.empty:
         st.error("분석할 데이터가 없습니다.");return
+    display_primary_metrics(summary,key)
     st.subheader("Analysis summary")
     st.dataframe(summary,hide_index=True,use_container_width=True)
-    if len(summary)==1:
-        s=summary.iloc[0]
-        cols=st.columns(4)
-        cols[0].metric("Mean |RH|",f"{abs(s['RH mean (cm³/C)']):.4g} cm³/C")
-        cols[1].metric("Hall carrier concentration",f"{s['Carrier concentration (cm⁻³)']:.4g} cm⁻³")
-        cols[2].metric("Hall mobility",f"{s['Hall mobility (cm²/V·s)']:.4g} cm²/V·s")
-        cols[3].metric("Mean Rs",f"{s['Rs mean (Ω/□)']:.4g} Ω/□")
     st.caption("반복별 signed RH와 Rs를 각각 평균한 뒤 nH=1/(q|RH_mean|), μH=|RH_mean|/ρ_mean을 계산합니다. Hall sign은 전극/자기장 극성 검증 전까지 캐리어 타입으로 해석하지 않습니다.")
     with st.expander("Repeat-level results / 반복별 계산 결과",expanded=True):
         st.dataframe(reps,hide_index=True,use_container_width=True)
@@ -140,7 +156,7 @@ def show_results(raw,field,thickness,ra,rb,manual,key):
 single,batch=st.tabs(["Single Analyzer","Batch Analyzer"])
 with single:
     st.subheader("Single Hall Analyzer")
-    st.caption("시편 하나의 반복 측정 ZIP 파일 업로드")
+    st.caption("시편 하나의 반복 측정 ZIP 파일 업로드 · RA/RB 자동 계산")
     upload=st.file_uploader("ZIP file",type=["zip"],key="singlezip")
     field,thick,current,recorded=measurement_controls("single")
     ra,rb,manual=resistance_controls("single")
@@ -163,7 +179,7 @@ with single:
                 for s in notices[:200]:st.warning(s)
 with batch:
     st.subheader("Batch Hall Analyzer")
-    st.caption("여러 시편·반복 측정 데이터를 폴더별로 분류한 ZIP 업로드")
+    st.caption("여러 시편·반복 측정 데이터를 폴더별로 분류한 ZIP 업로드 · RA/RB 자동 계산")
     upload=st.file_uploader("ZIP file (Sample/Repeat/file.xls)",type=["zip"],key="batchzip")
     field,thick,current,recorded=measurement_controls("batch")
     ra,rb,manual=resistance_controls("batch")

@@ -66,3 +66,21 @@ Physical safeguards: without an explicit contact-polarity calibration, carrier t
 ZIP is read in memory and parsed file by file. Limits: 500MB uncompressed and 10,000 ZIP members (not a hosting-memory guarantee). Streamlit's upload limit can be configured in `.streamlit/config.toml` if necessary. Repeated file uploads are reparsed only when the `분석 실행` button is pressed. Changing thickness/B recalculates summaries from extracted slopes.
 
 This is a research prototype; check measurement wiring, magnetic-field direction, Van der Pauw prerequisites and current-voltage linearity before treating results as validated material parameters.
+
+## v1.1 — Compact electrical-property overview
+
+The analysis results now show the three primary device properties prominently:
+carrier concentration (cm^-3), Hall mobility (cm^2/V/s), and resistivity (Ohm cm).
+The second row contains sheet resistance, absolute Hall coefficient, and valid
+Hall / Rs repeat counts. In Batch mode, select a sample to update the cards.
+
+Van der Pauw mapping is automatic when the standard four Keithley files are
+present: `i1-v23` and `i3-v41` form the first resistance direction; `i2-v34`
+and `i4-v12` form the second. Opposite-direction measurements are averaged
+within each repeat before the Van der Pauw equation is solved. The user has
+confirmed that `i1-v23` means current 1→4 and voltage 2−3. The complete
+permutation and voltage polarities should still be checked against the actual
+instrument wiring before interpreting contact-related signs. If one resistance
+direction is missing from a repeat, the repeat does not contribute to Rs mean.
+The original Hall ±B anti-symmetrization, signed RH averaging, and batch
+statistics are retained.

@@ -28,3 +28,17 @@ summ,det=summarize_samples(rep,15,1.08)
 assert len(summ)==2 and list(summ["N Hall"])==[3,3] and list(summ["N Rs"])==[1,1]
 assert np.all(np.isfinite(summ["Hall mobility (cm²/V·s)"]))
 print('PASS: 2 samples, 3 repeats each, Rs sparse repeats, independent sample means')
+
+# Automatic four-configuration averaging: opposite contact pairs.
+entries=[]
+for kind, resistance in [("i1-v23",10),("i3-v41",10.2),("i2-v34",12),("i4-v12",12.2)]:
+    entries.append(f(kind,resistance,resistance))
+with io.BytesIO() as data:
+    with zipfile.ZipFile(data,"w") as z:
+        for name,b in entries:z.writestr(name,b)
+    raw,warnings=read_zip(data.getvalue(),1,True)
+repeats, issues=compute_repeats(raw,1.08,15)
+assert np.isclose(repeats.iloc[0]["R_A_ohm"],10.1)
+assert np.isclose(repeats.iloc[0]["R_B_ohm"],12.1)
+assert np.isfinite(repeats.iloc[0]["Rs_ohm_sq"])
+print('PASS: automatic opposite-configuration Van der Pauw pairing')

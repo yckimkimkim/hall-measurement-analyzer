@@ -148,7 +148,7 @@ def van_der_pauw(ra: float, rb: float) -> float:
 
 
 def compute_repeats(raw: pd.DataFrame, field_t: float, thickness_nm: float,
-                    ra_kind: str | None, rb_kind: str | None,
+                    ra_kind: str | None = None, rb_kind: str | None = None,
                     flip_second_hall: bool=True) -> tuple[pd.DataFrame,pd.DataFrame]:
     if raw.empty: return pd.DataFrame(), pd.DataFrame()
     group_rows, diagnostics = [], []
@@ -175,10 +175,18 @@ def compute_repeats(raw: pd.DataFrame, field_t: float, thickness_nm: float,
             row["RH_cm3_C"] = row["Rxy_mean_ohm"] * (thickness_nm*1e-7) * 1e4 / field_t
         else:
             row["Rxy_mean_ohm"] = row["RH_cm3_C"] = float("nan")
-        if ra_kind and rb_kind and ra_kind != rb_kind and ra_kind in vals and rb_kind in vals:
-            # Recorded voltage sense order may be inverted. The user explicitly verifies contact assignment.
-            row["RA_ohm"],row["RB_ohm"] = abs(vals[ra_kind]),abs(vals[rb_kind])
-            row["Rs_ohm_sq"] = van_der_pauw(row["RA_ohm"],row["RB_ohm"])
+        # Confirmed lead pattern: i1-v23 = current 1 -> 4, voltage 2 - 3.
+        # Opposite configurations (1,3) and (2,4) are grouped as
+        # the two characteristic van der Pauw resistance directions.
+        # Use |V/I| only after the measurement polarity has been confirmed.
+        pair_a = [abs(vals[k]) for k in ("i1-v23", "i3-v41") if k in vals and np.isfinite(vals[k])]
+        pair_b = [abs(vals[k]) for k in ("i2-v34", "i4-v12") if k in vals and np.isfinite(vals[k])]
+        row["R_A_ohm"] = float(np.mean(pair_a)) if pair_a else float("nan")
+        row["R_B_ohm"] = float(np.mean(pair_b)) if pair_b else float("nan")
+        row["R_A_pair_diff_pct"] = (100 * abs(pair_a[0]-pair_a[1])/np.mean(pair_a)) if len(pair_a)==2 and np.mean(pair_a)>0 else float("nan")
+        row["R_B_pair_diff_pct"] = (100 * abs(pair_b[0]-pair_b[1])/np.mean(pair_b)) if len(pair_b)==2 and np.mean(pair_b)>0 else float("nan")
+        if pair_a and pair_b and row["R_A_ohm"]>0 and row["R_B_ohm"]>0:
+            row["Rs_ohm_sq"] = van_der_pauw(row["R_A_ohm"], row["R_B_ohm"])
             row["rho_ohm_cm"] = row["Rs_ohm_sq"]*(thickness_nm*1e-7)
         else:
             row["Rs_ohm_sq"] = row["rho_ohm_cm"] = float("nan")
@@ -186,7 +194,7 @@ def compute_repeats(raw: pd.DataFrame, field_t: float, thickness_nm: float,
         if not hall_candidates:
             diagnostics.append({"Sample":sample,"Repeat":rep,"Issue":"Hall ±B 쌍이 완성되지 않음"})
         if not np.isfinite(row["Rs_ohm_sq"]):
-            diagnostics.append({"Sample":sample,"Repeat":rep,"Issue":"이번 반복에서 Rs 미측정 또는 RA/RB 미지정 (시편 평균 Rs로 보완 가능)"})
+            diagnostics.append({"Sample":sample,"Repeat":rep,"Issue":"이번 반복에서 두 방향 저항값 중 하나가 누락됨 (시편의 다른 반복 Rs 사용 가능)"})
     return pd.DataFrame(group_rows),pd.DataFrame(diagnostics)
 
 
