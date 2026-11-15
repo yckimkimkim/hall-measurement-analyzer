@@ -56,3 +56,27 @@ def batch_sources(zips, folders, mode):
         return [(f.name,f.getvalue()) for f in zips]
     grouped=split_folders(folders)
     return [(name,zip_folder(group)) for name,group in grouped.items()]
+
+
+def individual_folder_sources(slots):
+    """Collect one measurement directory per independent uploader slot.
+
+    slots: iterable of (slot_number, list[UploadedFile]); repeated Excel basenames
+    across slots are intentionally permitted, and a parent folder is not needed.
+    """
+    sources=[]
+    for slot_number, uploaded in slots:
+        if not uploaded:
+            continue
+        grouped=split_folders(uploaded)
+        if len(grouped)!=1:
+            raise ValueError(
+                f"폴더 선택칸 {slot_number}: 한 번에 측정 폴더 하나만 선택해 주세요. "
+                f"현재 {len(grouped)}개의 하위 폴더가 감지됐습니다."
+            )
+        folder, files=next(iter(grouped.items()))
+        folder_name=PurePosixPath(folder).name
+        sources.append((f"{slot_number:02d} · {folder_name}", zip_folder(files)))
+    if len(sources)>100:
+        raise ValueError("한 번에 최대 100개의 측정 폴더를 처리할 수 있습니다.")
+    return sources
