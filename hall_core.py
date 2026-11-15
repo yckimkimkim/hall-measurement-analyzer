@@ -73,7 +73,7 @@ def load_table(path: str, data: bytes) -> pd.DataFrame:
         raise ValueError("텍스트 파일 인코딩을 인식하지 못함")
 
 
-def extract_iv(df: pd.DataFrame, target_ma: float, recorded: bool = True) -> dict:
+def extract_iv(df: pd.DataFrame, target_a: float, recorded: bool = True) -> dict:
     col = {str(c).upper().replace(" ", ""): c for c in df.columns}
     i_col = col.get("I1") or next((v for k, v in col.items() if re.fullmatch(r"I\d+|\d+I", k)), None)
     v_col = col.get("VDIFF") or next((v for k, v in col.items() if "DIFF" in k), None)
@@ -83,7 +83,7 @@ def extract_iv(df: pd.DataFrame, target_ma: float, recorded: bool = True) -> dic
     vy = pd.to_numeric(df[v_col], errors="coerce").to_numpy(float)
     good = np.isfinite(ix) & np.isfinite(vy)
     ix, vy = ix[good], vy[good]
-    target = target_ma * 1e-3
+    target = target_a
     if target <= 0:
         raise ValueError("Test Current는 양수여야 함")
     plus = np.flatnonzero(ix > 0)
@@ -108,7 +108,7 @@ def extract_iv(df: pd.DataFrame, target_ma: float, recorded: bool = True) -> dic
             "I_deviation_pct":max(abs(ip-target), abs(im+target))/target*100}
 
 
-def read_zip(content: bytes, current_ma: float, recorded: bool = True) -> tuple[pd.DataFrame, list[str]]:
+def read_zip(content: bytes, current_a: float, recorded: bool = True) -> tuple[pd.DataFrame, list[str]]:
     rows, notices = [], []
     with zipfile.ZipFile(io.BytesIO(content)) as z:
         infos = [i for i in z.infolist() if not i.is_dir() and not i.filename.startswith("__MACOSX/")]
@@ -133,7 +133,7 @@ def read_zip(content: bytes, current_ma: float, recorded: bool = True) -> tuple[
                 continue
             seen.add(key)
             try:
-                values = extract_iv(load_table(path, z.read(info)), current_ma, recorded)
+                values = extract_iv(load_table(path, z.read(info)), current_a, recorded)
                 rows.append({"Sample":sample,"Repeat":repeat,"Type":kind,"File":path, **values})
             except Exception as e:
                 notices.append(f"읽기 실패: {path} — {e}")

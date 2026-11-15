@@ -21,7 +21,7 @@ for sample,scale in [("A",1),("B",2)]:
 with io.BytesIO() as data:
   with zipfile.ZipFile(data,"w") as z:
     for name,b in entries:z.writestr(name,b)
-  raw,w=read_zip(data.getvalue(),1,True)
+  raw,w=read_zip(data.getvalue(),0.001,True)
 assert len(raw)==28 and not w,(len(raw),w)
 rep,_=compute_repeats(raw,1.08,15,"i1-v23","i2-v34")
 summ,det=summarize_samples(rep,15,1.08)
@@ -36,7 +36,7 @@ for kind, resistance in [("i1-v23",10),("i3-v41",10.2),("i2-v34",12),("i4-v12",1
 with io.BytesIO() as data:
     with zipfile.ZipFile(data,"w") as z:
         for name,b in entries:z.writestr(name,b)
-    raw,warnings=read_zip(data.getvalue(),1,True)
+    raw,warnings=read_zip(data.getvalue(),0.001,True)
 repeats, issues=compute_repeats(raw,1.08,15)
 assert np.isclose(repeats.iloc[0]["R_A_ohm"],10.1)
 assert np.isclose(repeats.iloc[0]["R_B_ohm"],12.1)

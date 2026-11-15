@@ -1,6 +1,45 @@
-# Hall Data Analyzer — Single / Batch ZIP
+# Hall Data Analyzer v1.3
 
-TFT Data Analyzer-inspired Streamlit app for Keithley 4200A-SCS raw I1/VDIFF Hall and Van der Pauw data.
+Streamlit web application for Keithley-style Hall and Van der Pauw measurement ZIP files.
+
+## Changes (v1.3)
+
+- Both tabs: **Thickness (nm) starts empty**; numeric input is required when running analysis.
+- Both tabs: **Test Current in A**, entered as text, accepting e.g. `1e-7`, `1E-7`, `0.0000001`; default `1e-3 A` (equivalent to the old 1 mA default).
+- Single Analyzer: **plots removed**. Displays three primary properties, Rs, RH, results tables, and downloadable CSV.
+- Batch Analyzer: **multiple ZIP upload**, with **one ZIP = one measurement repeat**. Each uploaded ZIP is assigned one sequential repeat number, irrespective of internal folder names.
+- Batch: editable **Sample** column. Same Sample label = repetitions of that sample; different label = separate sample. Default is `Sample_01` for all uploads.
+- Batch: **five graphs**, one per resistivity, Hall mobility, carrier concentration, Hall coefficient, and sheet resistance. X-axis is ZIP upload order / measurement number, Y-axis is each measured/derived property; each graph includes arithmetic mean and ±1 sample SD where available.
+- Batch: per-property arithmetic repeat means, sample standard deviations, and CV%, plus the primary derived sample values using **mean signed Hall coefficient** and **mean resistivity**. They are intentionally distinguished: `mean[1/(q|RH|)]` is not generally equal to `1/(q|mean[RH]|)`.
+- Each tab keeps raw diagnostics, missing/invalid data warnings, and CSV downloads. Batch also exports all five PNGs in one ZIP.
+
+## Inputs and equations
+
+- Magnetic Field defaults to **1.08 T**.
+- Thickness in **nm** must be filled manually, no default.
+- Test Current is in **A**, supports scientific notation. It is used for selecting ±I measurement points (±20% threshold). When `파일의 실측 전류 사용` is checked, the accepted points are fitted by their actual measured ΔI. A large current deviation still leads to rejected points, with a file warning; it is **not** proof of valid Hall measurement.
+- Each ZIP should have at most one of each measurement type: `i1-v23`, `i2-v34`, `i3-v41`, `i4-v12`, plus `i13-v24_Bpos/Bneg`, `i24-v13_Bpos/Bneg` and optional `offset` files.
+- Geometries are inferred from the file names and the already confirmed current return lead convention. Automatic RA/RB pairing: `i1-v23` with `i3-v41`, and `i2-v34` with `i4-v12`.
+- `RH = Rxy * t / B` with SI→cm³/C conversion, `rho = Rs * t(cm)`, `nH = 1/(q|RH|)`, `muH=|RH|/rho` in a single-carrier approximation.
+- Hall sign is not interpreted as carrier type without independent polarity calibration.
+
+## Examples of ZIP layout
+
+```
+run-001.zip
+  i1-v23#1@1.xls
+  i2-v34#1@1.xls
+  i3-v41#1@1.xls
+  i4-v12#1@1.xls
+  i13-v24_Bpos#1@1.xls
+  i13-v24_Bneg#1@1.xls
+  i24-v13_Bpos#1@1.xls
+  i24-v13_Bneg#1@1.xls
+  i13-v24_offset#1@1.xls
+  i24-v13_offset#1@1.xls
+```
+
+Repeat measurements are uploaded as `run-001.zip`, `run-002.zip`, etc. **Multiple ZIPs**, not a ZIP of ZIPs. If one ZIP contains nested directories, only the individual Excel/CSV measurement files inside that ZIP are parsed.
 
 ## Run
 
@@ -9,83 +48,19 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Deploy the folder to GitHub and select `app.py` on Streamlit Community Cloud.
+## Deployment
 
-## ZIP folder structure
+Upload the CONTENTS of this folder directly into the GitHub repository root (including `.streamlit/config.toml`). The Streamlit entry point is `app.py`. For an existing deployment commit replacements of `app.py` and `hall_core.py`, and add **`batch_processing.py`**. `requirements.txt` stays applicable.
 
-```text
-Hall_Batch.zip
-├── Sample_01_AsDep/
-│   ├── Repeat_001/
-│   │   ├── i1-v23#1@1.xls
-│   │   ├── i2-v34#1@1.xls
-│   │   ├── i3-v41#1@1.xls
-│   │   ├── i4-v12#1@1.xls
-│   │   ├── i13-v24_Bpos#1@1.xls
-│   │   ├── i13-v24_Bneg#1@1.xls
-│   │   ├── i24-v13_Bpos#1@1.xls
-│   │   └── i24-v13_Bneg#1@1.xls
-│   ├── Repeat_002/ (Hall-only repeat allowed)
-│   └── Repeat_003/
-└── Sample_02_RTA/
-    └── Repeat_001/
+## Local tests
+
+```bash
+python test_core.py
+python test_batch.py
 ```
 
-B=0 `_offset` files are optional diagnostics. `Sample/Resistivity/Repeat_001/` and `Sample/Hall/Repeat_002/` folder layouts are supported.
+Both tests use synthetic CSV data. The included source was also tested against previously uploaded `.xlsx` measurements (10 files; expected N Hall=1, N Rs=1). `.xls` files need `xlrd` installed from `requirements.txt`. Streamlit's full browser interface should be checked in the deployed environment.
 
-**Important:** Each Sample+Repeat+Type combination can contain one file; if a repeated acquisition is exported as multiple files with the same naming convention, separate it into distinct Repeat folders. Measurements with just one field polarity cannot yield Hall signal.
+## Caution
 
-## Config defaults
-
-- Magnetic field magnitude 1.08 T
-- Thickness 15 nm
-- Test Current 1 mA
-- Uses recorded I1 by default, checks ±20% matching of current setpoint
-- Hall geometry 2 has a sign reversal switch in source code (`flip_second_hall=True`), which matches the supplied raw-pair geometry in magnitude but is **not evidence of absolute polarity**.
-
-## Computation
-
-1. Each file: `R(B) = (V(+I) - V(-I)) / (I(+) - I(-))`.
-2. Each Hall wiring geometry: `Rxy = (R(+B) - R(-B)) / 2`.
-3. Take average of aligned signed Hall resistance across available geometries; `RH = Rxy * thickness(cm) * 1e4 / B(T)` in cm^3/C (convert SI m³/C to cm³/C).
-4. Van der Pauw `exp(-pi RA/Rs)+exp(-pi RB/Rs)=1` where **RA and RB are manually chosen and verified** because raw filenames alone cannot determine the correct physical wiring.
-5. Average `RH` and `Rs` separately over repeat groups (Hall and VDP may have different repeat counts); derive `nH = 1/(q|mean RH|)`, `rho = mean Rs * thickness(cm)`, `muH = |mean RH|/rho`.
-6. Standard deviation of RH and Rs is sample SD (ddof=1). Missing/invalid readings stay visible; they are not silently zero-filled or excluded as statistical outliers.
-
-Physical safeguards: without an explicit contact-polarity calibration, carrier type cannot be concluded from Hall voltage sign. Voltage signs for VDP contacts must be verified before treating abs(measured slope) as RA/RB. Strong field-dependent offsets or nonlinear IVs require review. No automatic outlier rejection.
-
-## Exports
-
-- Per-sample summary CSV
-- Repeat-level CSV
-- Raw-file extraction CSV
-- 300dpi PNG graph ZIP
-
-## Performance and limitations
-
-ZIP is read in memory and parsed file by file. Limits: 500MB uncompressed and 10,000 ZIP members (not a hosting-memory guarantee). Streamlit's upload limit can be configured in `.streamlit/config.toml` if necessary. Repeated file uploads are reparsed only when the `분석 실행` button is pressed. Changing thickness/B recalculates summaries from extracted slopes.
-
-This is a research prototype; check measurement wiring, magnetic-field direction, Van der Pauw prerequisites and current-voltage linearity before treating results as validated material parameters.
-
-## v1.1 — Compact electrical-property overview
-
-The analysis results now show the three primary device properties prominently:
-carrier concentration (cm^-3), Hall mobility (cm^2/V/s), and resistivity (Ohm cm).
-The second row contains sheet resistance, absolute Hall coefficient, and valid
-Hall / Rs repeat counts. In Batch mode, select a sample to update the cards.
-
-Van der Pauw mapping is automatic when the standard four Keithley files are
-present: `i1-v23` and `i3-v41` form the first resistance direction; `i2-v34`
-and `i4-v12` form the second. Opposite-direction measurements are averaged
-within each repeat before the Van der Pauw equation is solved. The user has
-confirmed that `i1-v23` means current 1→4 and voltage 2−3. The complete
-permutation and voltage polarities should still be checked against the actual
-instrument wiring before interpreting contact-related signs. If one resistance
-direction is missing from a repeat, the repeat does not contribute to Rs mean.
-The original Hall ±B anti-symmetrization, signed RH averaging, and batch
-statistics are retained.
-
-## v1.2 표시 형식
-- Electrical properties 카드와 Analysis summary, Repeat-level, Raw diagnostics 화면의 과학적 표기법을 `2.668 × 10²⁰` 형태(위첨자 지수)로 표시합니다.
-- 비교적 작은/일반적인 값은 읽기 쉬운 소수 표기를 사용합니다. 예: `21.89`, `65.55`.
-- CSV 내보내기 및 계산에 사용되는 원본 수치(부동소수점)는 변경하지 않습니다.
+The displayed values are conditioned on stable ohmic contacts, reliable ±I at a known B, valid current range, and confirmed geometry. The program does not determine measurement credibility from an algebraically finite result alone.
