@@ -1,4 +1,4 @@
-"""Hall Data Analyzer v1.3 — one ZIP = one measurement in Batch mode."""
+"""Hall Data Analyzer v1.4 — ZIP and directory-per-measurement support."""
 from __future__ import annotations
 
 import io
@@ -14,6 +14,7 @@ import streamlit as st
 
 from hall_core import compute_repeats, read_zip, summarize_samples
 from batch_processing import METRICS, batch_one_zip, batch_derived, batch_stats
+from folder_upload import batch_sources
 
 st.set_page_config(page_title="Hall Data Analyzer", page_icon="🧲", layout="wide")
 st.markdown("""<style>
@@ -127,7 +128,7 @@ def plot_metric(df: pd.DataFrame, param: str, display_name: str, units: str):
     d = df.sort_values("Order")
     x = d["Order"].to_numpy(int)
     y = pd.to_numeric(d[param], errors="coerce").to_numpy(float)
-    ax.plot(x,y,"o-", linewidth=1.55, markersize=5.5, label="Each ZIP")
+    ax.plot(x,y,"o-", linewidth=1.55, markersize=5.5, label="Each measurement")
     finite = y[np.isfinite(y)]
     if len(finite):
         avg = float(finite.mean())
@@ -135,7 +136,7 @@ def plot_metric(df: pd.DataFrame, param: str, display_name: str, units: str):
         if len(finite)>1:
             std=float(np.std(finite,ddof=1))
             ax.axhspan(avg-std,avg+std, color="#ff4b4b",alpha=.09,label="Mean ± SD")
-    ax.set_xlabel("Measurement number (uploaded ZIP order)")
+    ax.set_xlabel("Measurement number")
     ax.set_ylabel(f"{display_name} ({units})")
     ax.set_title(display_name)
     if len(x):
@@ -163,14 +164,28 @@ single, batch = st.tabs(["Single Analyzer", "Batch Analyzer"])
 
 with single:
     st.subheader("Single Hall Analyzer")
-    st.caption("측정 ZIP 1개 → 주요 물성값과 계산 표만 출력 (그래프 없음)")
-    file=st.file_uploader("Measurement ZIP",type=["zip"],key="single_zip")
+    st.caption("ZIP 1개 또는 측정 폴더 1개 → 주요 물성값과 계산 표만 출력 (그래프 없음)")
+    single_mode=st.radio("업로드 방식",["폴더", "ZIP"],horizontal=True,key="single_mode")
+    if single_mode=="폴더":
+        st.caption("폴더 1개를 선택하세요. 폴더 내부의 Excel 파일명을 자동 인식합니다.")
+        single_folder=st.file_uploader("Measurement folder",type=["xls","xlsx","csv","txt"],accept_multiple_files="directory",key="single_folder")
+        file=None
+    else:
+        file=st.file_uploader("Measurement ZIP",type=["zip"],key="single_zip")
+        single_folder=[]
     ctl=controls("single")
     if st.button("분석 실행",type="primary",key="single_run"):
         try:
             b_t,thickness,current_a,recorded=parse_controls(ctl)
-            if file is None: raise ValueError("ZIP 파일을 업로드해 주세요.")
-            raw,notices=read_zip(file.getvalue(),current_a,recorded)
+            if single_mode=="폴더":
+                sources=batch_sources([],single_folder,"폴더")
+                if len(sources)!=1:
+                    raise ValueError(f"Single Analyzer에서는 측정 폴더 1개를 선택해야 합니다. 현재 {len(sources)}개 폴더가 감지됐습니다.")
+            else:
+                sources=batch_sources([file] if file else [],[],"ZIP")
+                if not sources: raise ValueError("ZIP 파일을 업로드해 주세요.")
+            source_name,source_data=sources[0]
+            raw,notices=read_zip(source_data,current_a,recorded)
             if raw.empty: raise ValueError("유효한 측정 파일이 없습니다. File warnings: " + "; ".join(notices[:5]))
             # One ZIP = one measurement, even if extracted folder happens to have an arbitrary name.
             if raw["Type"].duplicated().any():
@@ -179,7 +194,7 @@ with single:
             raw["Sample"]="Sample_01";raw["Repeat"]="Repeat_0001"
             reps, problems=compute_repeats(raw,b_t,thickness)
             summary,reps=summarize_samples(reps,thickness,b_t)
-            st.session_state["single_result"]=(summary,reps,raw,problems,notices, (file.name,b_t,thickness,current_a,recorded))
+            st.session_state["single_result"]=(summary,reps,raw,problems,notices, (source_name,b_t,thickness,current_a,recorded))
         except Exception as ex:
             st.error(f"분석 실패: {ex}")
             st.session_state.pop("single_result",None)
@@ -199,42 +214,58 @@ with single:
 
 with batch:
     st.subheader("Batch Hall Analyzer")
-    st.caption("ZIP 1개 = 측정 1회. 여러 ZIP을 한 번에 올리면 각 ZIP별 물성을 계산하고 5개 그래프 및 시편별 통계를 출력합니다.")
-    files=st.file_uploader("Measurement ZIP files (multiple)",type=["zip"],accept_multiple_files=True,key="batch_zips")
+    st.caption("측정 폴더 1개 = 측정 1회. 부모 폴더를 선택하면 하위 1, 2, 2t, 3 등의 폴더별로 10개 파일을 묶습니다. 기존 ZIP도 지원합니다.")
+    batch_mode=st.radio("업로드 방식",["폴더", "ZIP"],horizontal=True,key="batch_mode")
+    if batch_mode=="폴더":
+        st.caption("예시: Hall Measurements/1/*.xls, Hall Measurements/2/*.xls, Hall Measurements/2t/*.xls — 상위 Hall Measurements 폴더를 선택하세요.")
+        folder_files=st.file_uploader("Measurement folders", type=["xls","xlsx","csv","txt"],accept_multiple_files="directory",key="batch_folders")
+        zip_files=[]
+    else:
+        zip_files=st.file_uploader("Measurement ZIP files (multiple)",type=["zip"],accept_multiple_files=True,key="batch_zips")
+        folder_files=[]
+    sources=[]
+    input_error=None
+    try:
+        sources=batch_sources(zip_files,folder_files,batch_mode)
+    except Exception as ex:
+        input_error=str(ex)
+        st.error(input_error)
     ctl=controls("batch")
-    if files:
-        st.caption(f"선택한 ZIP: {len(files)}개 · 아래 Sample 열에서 시편을 지정하세요. 같은 Sample 이름의 ZIP은 반복 측정으로 집계합니다.")
-        names=[f.name for f in files]
+    if sources:
+        st.caption(f"인식된 측정 세트: {len(sources)}개 · 각 폴더/ZIP을 1회 측정으로 처리합니다. 동일 Sample 이름은 반복 측정으로 집계합니다.")
+        names=[name for name,_ in sources]
+        labels=[name.rsplit('/',1)[-1] for name in names]
         if len(set(names)) != len(names):
-            st.warning("동일한 파일명이 있습니다. 결과에서는 업로드 순서로 구분합니다.")
-        map_df=pd.DataFrame({"Order":range(1,len(files)+1), "ZIP file":names,"Sample":["Sample_01"]*len(files)})
+            st.warning("동일한 측정 세트 이름이 있습니다. 업로드 순서로 구분합니다.")
+        map_df=pd.DataFrame({"Order":range(1,len(sources)+1), "Measurement":names,"Sample":["Sample_01"]*len(sources)})
         map_df=st.data_editor(map_df,hide_index=True,use_container_width=True,
-                              disabled=["Order","ZIP file"],key="batch_file_map",
+                              disabled=["Order","Measurement"],key=f"batch_file_map_{batch_mode}",
                               column_config={"Sample":st.column_config.TextColumn("Sample",help="반복 측정 그룹. 서로 다른 시편이면 Sample_02 등으로 변경")})
     else:
         map_df=None
     if st.button("Batch 분석 실행",type="primary",key="batch_run"):
         try:
             b_t,thickness,current_a,recorded=parse_controls(ctl)
-            if not files: raise ValueError("ZIP 파일을 하나 이상 업로드해 주세요.")
+            if input_error: raise ValueError(input_error)
+            if not sources: raise ValueError("분석할 폴더 또는 ZIP 파일을 업로드해 주세요.")
             items=[];all_notices=[];failed=[]
-            for j,(f,(_,m)) in enumerate(zip(files,map_df.iterrows()),start=1):
+            for j,((name,payload),(_,m)) in enumerate(zip(sources,map_df.iterrows()),start=1):
                 sample=str(m["Sample"]).strip()
-                if not sample: raise ValueError(f"{j}번째 ZIP의 Sample 이름이 비어 있습니다.")
+                if not sample: raise ValueError(f"{j}번째 측정 세트의 Sample 이름이 비어 있습니다.")
                 try:
-                    r,w=batch_one_zip(f.getvalue(),f.name,sample,j,current_a,recorded)
-                    all_notices += [f"[{j}: {f.name}] {warning}" for warning in w]
+                    r,w=batch_one_zip(payload,name,sample,j,current_a,recorded)
+                    all_notices += [f"[{j}: {name}] {warning}" for warning in w]
                     if r.empty:
-                        failed.append(f"{j}: {f.name} — 유효한 측정 파일 없음")
+                        failed.append(f"{j}: {name} — 유효한 측정 파일 없음")
                     else:
                         items.append(r)
                 except Exception as ex:
-                    failed.append(f"{j}: {f.name} — {ex}")
+                    failed.append(f"{j}: {name} — {ex}")
             if not items: raise ValueError("모든 ZIP 분석에 실패했습니다. " + "; ".join(failed[:5]))
             raw=pd.concat(items, ignore_index=True)
             reps,problems=compute_repeats(raw,b_t,thickness)
-            order_map={f"Repeat_{i:04d}":i for i in range(1,len(files)+1)}
-            zip_map={f"Repeat_{i:04d}":f.name for i,f in enumerate(files,start=1)}
+            order_map={f"Repeat_{i:04d}":i for i in range(1,len(sources)+1)}
+            zip_map={f"Repeat_{i:04d}":name for i,(name,_) in enumerate(sources,start=1)}
             reps["Order"]=reps["Repeat"].map(order_map).astype(int)
             reps["ZIP"]=reps["Repeat"].map(zip_map)
             reps=batch_derived(reps)
@@ -246,11 +277,11 @@ with batch:
             st.session_state.pop("batch_result",None)
     if "batch_result" in st.session_state:
         summary,reps,raw,problems,notices,failed,stats,used=st.session_state["batch_result"]
-        st.caption(f"마지막 분석 조건: B={used[0]} T · t={used[1]} nm · I={used[2]:.3g} A · 결과: {len(reps)} ZIP")
+        st.caption(f"마지막 분석 조건: B={used[0]} T · t={used[1]} nm · I={used[2]:.3g} A · 결과: {len(reps)}회 측정")
         a,b,c=st.columns(3)
         a.metric("Samples",len(summary))
-        b.metric("Measurement ZIPs parsed",len(reps))
-        c.metric("ZIPs failed",len(failed))
+        b.metric("Measurements parsed",len(reps))
+        c.metric("Measurements failed",len(failed))
         if failed:
             with st.expander(f"Failed ZIPs ({len(failed)})",expanded=True):
                 for s in failed: st.warning(s)
@@ -273,15 +304,15 @@ with batch:
                 cols=st.columns(2)
             with cols[k%2]:
                 st.pyplot(fig,use_container_width=True)
-        st.caption("X축 숫자는 업로드한 ZIP 순번입니다. 회색 점/선은 ZIP별 값, 빨간 점선은 해당 값의 산술 평균입니다. 데이터가 없는 ZIP은 선이 끊어집니다.")
-        with st.expander("Repeat-level results / ZIP별 물성값",expanded=True):
+        st.caption("X축 숫자는 측정 폴더 또는 ZIP 순번입니다. 회색 점/선은 측정별 값, 빨간 점선은 해당 값의 산술 평균입니다. 데이터가 없는 ZIP은 선이 끊어집니다.")
+        with st.expander("Repeat-level results / 측정별 물성값",expanded=True):
             show_cols=["Order","ZIP","Sample","RH_cm3_C","Rs_ohm_sq","rho_ohm_cm","mu_each_cm2_Vs","n_each_cm3","Hall_geometry_spread_pct","R_A_pair_diff_pct","R_B_pair_diff_pct"]
             st.dataframe(styled_table(reps[[c for c in show_cols if c in reps]]),hide_index=True,use_container_width=True)
         common_diagnostics(raw,problems,notices,"Batch")
         a,b,c,d=st.columns(4)
         a.download_button("Sample summary CSV",csv_data(summary),"hall_batch_summary.csv",mime="text/csv")
         b.download_button("5-property statistics CSV",csv_data(stats),"hall_batch_statistics.csv",mime="text/csv")
-        c.download_button("Per-ZIP results CSV",csv_data(reps),"hall_batch_repeats.csv",mime="text/csv")
+        c.download_button("Per-measurement results CSV",csv_data(reps),"hall_batch_repeats.csv",mime="text/csv")
         d.download_button("All 5 graphs PNG ZIP",bundle_graphs(figs),"hall_batch_graphs.zip",mime="application/zip")
         for fig in figs.values(): plt.close(fig)
 
