@@ -1,4 +1,4 @@
-"""Hall Data Analyzer v1.5 — multiple individual folder upload slots."""
+"""Hall Data Analyzer v1.7 — ZIP-only Single and Batch uploads."""
 from __future__ import annotations
 
 import io
@@ -14,7 +14,6 @@ import streamlit as st
 
 from hall_core import compute_repeats, read_zip, summarize_samples
 from batch_processing import METRICS, batch_one_zip, batch_derived, batch_stats
-from folder_upload import batch_sources, individual_folder_sources
 
 st.set_page_config(page_title="Hall Data Analyzer", page_icon="🧲", layout="wide")
 st.markdown("""<style>
@@ -164,26 +163,15 @@ single, batch = st.tabs(["Single Analyzer", "Batch Analyzer"])
 
 with single:
     st.subheader("Single Hall Analyzer")
-    st.caption("ZIP 1개 또는 측정 폴더 1개 → 주요 물성값과 계산 표만 출력 (그래프 없음)")
-    single_mode=st.radio("업로드 방식",["폴더", "ZIP"],horizontal=True,key="single_mode")
-    if single_mode=="폴더":
-        st.caption("폴더 1개를 선택하세요. 폴더 내부의 Excel 파일명을 자동 인식합니다.")
-        single_folder=st.file_uploader("Measurement folder",type=["xls","xlsx","csv","txt"],accept_multiple_files="directory",key="single_folder")
-        file=None
-    else:
-        file=st.file_uploader("Measurement ZIP",type=["zip"],key="single_zip")
-        single_folder=[]
+    st.caption("측정 Excel 파일이 포함된 ZIP 1개 → 주요 물성값과 계산 표만 출력 (그래프 없음)")
+    file=st.file_uploader("Measurement ZIP (.zip)",type=["zip"],key="single_zip")
     ctl=controls("single")
     if st.button("분석 실행",type="primary",key="single_run"):
         try:
             b_t,thickness,current_a,recorded=parse_controls(ctl)
-            if single_mode=="폴더":
-                sources=batch_sources([],single_folder,"폴더")
-                if len(sources)!=1:
-                    raise ValueError(f"Single Analyzer에서는 측정 폴더 1개를 선택해야 합니다. 현재 {len(sources)}개 폴더가 감지됐습니다.")
-            else:
-                sources=batch_sources([file] if file else [],[],"ZIP")
-                if not sources: raise ValueError("ZIP 파일을 업로드해 주세요.")
+            if file is None:
+                raise ValueError("ZIP 파일을 업로드해 주세요.")
+            sources=[(file.name, file.getvalue())]
             source_name,source_data=sources[0]
             raw,notices=read_zip(source_data,current_a,recorded)
             if raw.empty: raise ValueError("유효한 측정 파일이 없습니다. File warnings: " + "; ".join(notices[:5]))
@@ -214,52 +202,24 @@ with single:
 
 with batch:
     st.subheader("Batch Hall Analyzer")
-    st.caption("개별 측정 폴더 1개 = 측정 1회. 상위 폴더는 필요하지 않습니다. 폴더 10개를 추가한 뒤 Batch 분석을 한 번 실행하세요.")
-    batch_mode=st.radio("업로드 방식",["개별 폴더", "ZIP"],horizontal=True,key="batch_mode")
-    folder_slots=[]
-    zip_files=[]
-    if batch_mode=="개별 폴더":
-        st.info("각 칸에서 1, 2, 2t, 3 … 처럼 **측정 폴더 하나씩** 선택하세요. 여러 폴더를 모은 다음 분석 버튼은 한 번만 누르면 됩니다. 일반 브라우저 폴더 선택창에서는 폴더 10개를 동시에 다중 선택할 수 없을 수 있습니다.")
-        if "folder_slot_count" not in st.session_state:
-            st.session_state["folder_slot_count"]=10
-        add_col, remove_col, _=st.columns([1,1,5])
-        with add_col:
-            if st.button("+ 폴더 추가", key="add_measurement_folder", use_container_width=True):
-                st.session_state["folder_slot_count"]=min(100,st.session_state["folder_slot_count"]+1)
-        with remove_col:
-            if st.button("− 마지막 칸 제거", key="remove_measurement_folder", use_container_width=True,
-                         disabled=st.session_state["folder_slot_count"]<=1):
-                st.session_state["folder_slot_count"]-=1
-        st.caption(f"현재 {st.session_state['folder_slot_count']}개 선택칸 · 최대 100개까지 추가 가능")
-        for idx in range(st.session_state["folder_slot_count"]):
-            upload=st.file_uploader(
-                f"측정 폴더 {idx+1}", type=["xls","xlsx","csv","txt"],
-                accept_multiple_files="directory", key=f"measurement_dir_{idx}",
-                help="한 폴더의 측정 Excel 파일 10개를 가져옵니다. 폴더를 압축하지 않아도 됩니다."
-            )
-            folder_slots.append((idx+1, upload or []))
-    else:
-        zip_files=st.file_uploader("Measurement ZIP files (multiple)",type=["zip"],accept_multiple_files=True,key="batch_zips")
-    sources=[]
+    st.caption("ZIP 파일 1개 = 반복 측정 1회. 여러 ZIP 파일을 한 번에 업로드하세요.")
+    zip_files=st.file_uploader(
+        "Measurement ZIP files (multiple)", type=["zip"],
+        accept_multiple_files=True, key="batch_zips",
+        help="각 ZIP에는 해당 회차의 Hall 및 Van der Pauw 측정 파일이 포함되어 있어야 합니다."
+    )
+    sources=[(f.name, f.getvalue()) for f in (zip_files or [])]
     input_error=None
-    try:
-        if batch_mode=="개별 폴더":
-            sources=individual_folder_sources(folder_slots)
-        else:
-            sources=batch_sources(zip_files,[],"ZIP")
-    except Exception as ex:
-        input_error=str(ex)
-        st.error(input_error)
     ctl=controls("batch")
     if sources:
-        st.caption(f"인식된 측정 세트: {len(sources)}개 · 각 폴더/ZIP을 1회 측정으로 처리합니다. 동일 Sample 이름은 반복 측정으로 집계합니다.")
+        st.caption(f"인식된 측정 ZIP: {len(sources)}개 · ZIP당 1회 측정으로 처리합니다. 동일 Sample 이름은 반복 측정으로 집계합니다.")
         names=[name for name,_ in sources]
         labels=[name.rsplit('/',1)[-1] for name in names]
         if len(set(names)) != len(names):
             st.warning("동일한 측정 세트 이름이 있습니다. 업로드 순서로 구분합니다.")
         map_df=pd.DataFrame({"Order":range(1,len(sources)+1), "Measurement":names,"Sample":["Sample_01"]*len(sources)})
         map_df=st.data_editor(map_df,hide_index=True,use_container_width=True,
-                              disabled=["Order","Measurement"],key=f"batch_file_map_{batch_mode}_{len(sources)}",
+                              disabled=["Order","Measurement"],key=f"batch_file_map_zip_{len(sources)}",
                               column_config={"Sample":st.column_config.TextColumn("Sample",help="반복 측정 그룹. 서로 다른 시편이면 Sample_02 등으로 변경")})
     else:
         map_df=None
@@ -267,7 +227,7 @@ with batch:
         try:
             b_t,thickness,current_a,recorded=parse_controls(ctl)
             if input_error: raise ValueError(input_error)
-            if not sources: raise ValueError("분석할 폴더 또는 ZIP 파일을 업로드해 주세요.")
+            if not sources: raise ValueError("분석할 ZIP 파일을 업로드해 주세요.")
             items=[];all_notices=[];failed=[]
             for j,((name,payload),(_,m)) in enumerate(zip(sources,map_df.iterrows()),start=1):
                 sample=str(m["Sample"]).strip()
@@ -328,7 +288,7 @@ with batch:
                 cols=st.columns(2)
             with cols[k%2]:
                 st.pyplot(fig,use_container_width=True)
-        st.caption("X축 숫자는 측정 폴더 또는 ZIP 순번입니다. 회색 점/선은 측정별 값, 빨간 점선은 해당 값의 산술 평균입니다. 데이터가 없는 ZIP은 선이 끊어집니다.")
+        st.caption("X축 숫자는 ZIP 업로드 순번입니다. 회색 점/선은 측정별 값, 빨간 점선은 해당 값의 산술 평균입니다. 데이터가 없는 ZIP은 선이 끊어집니다.")
         with st.expander("Repeat-level results / 측정별 물성값",expanded=True):
             show_cols=["Order","ZIP","Sample","Thickness_nm","RH_cm3_C","Rs_ohm_sq","rho_ohm_cm","mu_each_cm2_Vs","n_each_cm3","Hall_geometry_spread_pct","R_A_pair_diff_pct","R_B_pair_diff_pct"]
             st.dataframe(styled_table(reps[[c for c in show_cols if c in reps]]),hide_index=True,use_container_width=True)
