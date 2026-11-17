@@ -1,7 +1,7 @@
 """ZIP-per-measurement batch aggregation and reporting."""
 import numpy as np
 import pandas as pd
-from hall_core import Q, read_zip
+from hall_core import Q, read_zip, summarize_samples
 
 METRICS = [
     ("Resistivity", "rho_ohm_cm", "Ω·cm"),
@@ -50,3 +50,27 @@ def batch_stats(reps):
                          "Max":float(a.max()) if len(a) else np.nan})
     return pd.DataFrame(rows)
 
+
+
+def summarize_batch_repeat_means(reps: pd.DataFrame, thickness_nm: float, field_t: float):
+    """Batch: derive each measurement first, then average n and mobility.
+
+    Unlike Single mode, do NOT calculate these two displayed values from
+    the averages of signed RH and resistivity. Preserve the signed RH average
+    and rho/Rs means for diagnostics and the existing output schema.
+    """
+    summary, detail = summarize_samples(reps, thickness_nm, field_t)
+    if summary.empty:
+        return summary, detail
+
+    for sample, group in detail.groupby("Sample", sort=False):
+        mask = summary["Sample"].eq(sample)
+        for col, output_col, n_col in (
+            ("n_each_cm3", "Carrier concentration (cm⁻³)", "N carrier concentration"),
+            ("mu_each_cm2_Vs", "Hall mobility (cm²/V·s)", "N mobility"),
+        ):
+            vals = pd.to_numeric(group[col], errors="coerce").to_numpy(dtype=float)
+            vals = vals[np.isfinite(vals)]
+            summary.loc[mask, output_col] = float(vals.mean()) if len(vals) else np.nan
+            summary.loc[mask, n_col] = len(vals)
+    return summary, detail

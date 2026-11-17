@@ -1,4 +1,4 @@
-"""Hall Data Analyzer v1.7 — ZIP-only Single and Batch uploads."""
+"""Hall Data Analyzer v1.8 — Batch reports arithmetic means of each measurement."""
 from __future__ import annotations
 
 import io
@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from hall_core import compute_repeats, read_zip, summarize_samples
-from batch_processing import METRICS, batch_one_zip, batch_derived, batch_stats
+from batch_processing import METRICS, batch_one_zip, batch_derived, batch_stats, summarize_batch_repeat_means
 
 st.set_page_config(page_title="Hall Data Analyzer", page_icon="🧲", layout="wide")
 st.markdown("""<style>
@@ -249,7 +249,7 @@ with batch:
             reps["Order"]=reps["Repeat"].map(order_map).astype(int)
             reps["ZIP"]=reps["Repeat"].map(zip_map)
             reps=batch_derived(reps)
-            summary,reps=summarize_samples(reps,thickness,b_t)
+            summary,reps=summarize_batch_repeat_means(reps,thickness,b_t)
             # Keep the user-entered film thickness in each measurement export row.
             # The calculation already uses the same thickness value.
             reps.insert(reps.columns.get_loc("rho_ohm_cm") if "rho_ohm_cm" in reps.columns else len(reps.columns),
@@ -272,9 +272,9 @@ with batch:
         sample=st.selectbox("결과를 표시할 시편",list(summary["Sample"]),key="batch_sample_focus")
         selected=summary.loc[summary["Sample"]==sample].iloc[0]
         primary(selected)
-        st.subheader("Batch summary — mean RH and mean resistivity based derived properties")
+        st.subheader("Batch summary — arithmetic mean of individual measurements")
         st.dataframe(styled_table(summary),hide_index=True,use_container_width=True)
-        st.caption("대표 carrier concentration·mobility는 시편별 평균 signed Hall coefficient 및 평균 resistivity를 이용해 산출합니다. 각 ZIP의 개별 계산값에 대한 산술 평균은 아래 통계표에 별도로 표시됩니다.")
+        st.caption("Carrier concentration과 Hall mobility는 각 ZIP의 측정값을 먼저 계산한 뒤 유효한 값을 산술 평균합니다. 따라서 아래 Repeat statistics의 Mean과 일치합니다. Hall coefficient는 부호를 유지해 평균합니다.")
         st.subheader("Per-metric repeat statistics (Mean / SD / CV)")
         st.dataframe(styled_table(stats),hide_index=True,use_container_width=True)
         st.subheader(f"5 measurement graphs — {sample}")
@@ -301,4 +301,4 @@ with batch:
         for fig in figs.values(): plt.close(fig)
 
 st.divider()
-st.caption("Method: ±I correction → ±B reversal → signed Hall coefficient and Van der Pauw Rs → repeat means → derived sample properties. Interpret carrier sign only after verifying probe/B polarity. Units: Thickness nm; Test Current A; B T.")
+st.caption("Method: ±I correction → ±B reversal → per-measurement RH, Rs, ρ, nH, μH → arithmetic means of valid per-measurement properties (Batch). Interpret carrier sign only after verifying probe/B polarity. Units: Thickness nm; Test Current A; B T.")

@@ -3,7 +3,7 @@ import io
 import zipfile
 import numpy as np
 import pandas as pd
-from batch_processing import batch_one_zip, batch_derived, batch_stats
+from batch_processing import batch_one_zip, batch_derived, batch_stats, summarize_batch_repeat_means
 from hall_core import compute_repeats, summarize_samples
 
 
@@ -29,7 +29,7 @@ raw=pd.concat(raws,ignore_index=True)
 reps,issues=compute_repeats(raw,1.08,163)
 reps['Order']=[1,2,3]
 reps=batch_derived(reps)
-summary,_=summarize_samples(reps,163,1.08)
+summary,_=summarize_batch_repeat_means(reps,163,1.08)
 stats=batch_stats(reps)
 assert len(reps)==3
 assert len(stats)==5
@@ -38,3 +38,23 @@ assert int(summary.iloc[0]['N Hall'])==3
 assert np.isfinite(summary.iloc[0]['Hall mobility (cm²/V·s)'])
 assert np.isfinite(reps['n_each_cm3']).all()
 print('PASS: three independent ZIP files parsed as three repeats; five metrics and arithmetic statistics')
+
+
+# Regression: signed RH changes sign once. The batch cards MUST show the
+# arithmetic means of individual n and mobility, even though those differ
+# from the values derived from mean signed RH.
+import numpy as np
+reps2 = reps.copy()
+reps2.loc[reps2.index[-1], "RH_cm3_C"] *= -1
+reps2 = batch_derived(reps2)
+new_summary, _ = summarize_batch_repeat_means(reps2, 163, 1.08)
+old_summary, _ = summarize_samples(reps2, 163, 1.08)
+new_stats = batch_stats(reps2)
+for prop, metric in [("Carrier concentration (cm⁻³)", "Carrier concentration"),
+                     ("Hall mobility (cm²/V·s)", "Hall mobility")]:
+    displayed = new_summary.iloc[0][prop]
+    tabulated = new_stats.loc[new_stats["Metric"].eq(metric), "Mean (arithmetic repeat values)"].iloc[0]
+    assert np.isclose(displayed, tabulated), (prop, displayed, tabulated)
+    assert not np.isclose(displayed, old_summary.iloc[0][prop]), prop
+assert np.isclose(new_summary.iloc[0]["RH mean (cm³/C)"], reps2["RH_cm3_C"].mean())
+print("PASS: Batch cards match repeat-statistics arithmetic means, including sign-flip cases")
